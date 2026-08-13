@@ -1,0 +1,6 @@
+{
+  "name": "Clavier Inclusive",
+  "description": "Un clavier minimaliste, féministe et accessible avec thèmes Eau, Forêt, Fleurs, prédictions intelligentes et raccourcis sécurisés.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
