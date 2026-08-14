@@ -715,8 +715,11 @@ fun KeyButton(
                 detectTapGestures(
                     onPress = {
                         isPressed = true
-                        tryAwaitRelease()
-                        isPressed = false
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            isPressed = false
+                        }
                     },
                     onTap = { onClick() }
                 )
@@ -777,17 +780,22 @@ fun RepeatableKeyButton(
                 detectTapGestures(
                     onPress = {
                         isPressed = true
-                        onClick()
                         val job = coroutineScope.launch {
-                            delay(400)
-                            while (isPressed) {
+                            try {
                                 onClick()
-                                delay(70)
-                            }
+                                delay(350)
+                                while (isPressed) {
+                                    onClick()
+                                    delay(60)
+                                }
+                            } catch (_: Exception) {}
                         }
-                        tryAwaitRelease()
-                        isPressed = false
-                        job.cancel()
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            isPressed = false
+                            job.cancel()
+                        }
                     }
                 )
             },

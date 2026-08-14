@@ -2,6 +2,8 @@ package com.example.ui.keyboard
 
 import com.example.data.KeyboardDao
 import com.example.data.ShortcutEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class PredictiveEngine(private val keyboardDao: KeyboardDao? = null) {
 
@@ -35,10 +37,10 @@ class PredictiveEngine(private val keyboardDao: KeyboardDao? = null) {
         "frapp" to "frappe"
     )
 
-    suspend fun getSuggestions(currentPrefix: String): List<String> {
+    suspend fun getSuggestions(currentPrefix: String): List<String> = withContext(Dispatchers.IO) {
         val trimmed = currentPrefix.trim().lowercase()
         if (trimmed.isEmpty()) {
-            return listOf("inclusif·ve", "toustes", "iel")
+            return@withContext listOf("inclusif·ve", "toustes", "iel")
         }
 
         val results = mutableListOf<String>()
@@ -49,9 +51,11 @@ class PredictiveEngine(private val keyboardDao: KeyboardDao? = null) {
         }
 
         // 2. Check shortcuts from Room DB
-        keyboardDao?.getShortcutByTrigger(trimmed)?.let { shortcut ->
-            results.add(0, "🔑 ${shortcut.expansion}")
-        }
+        try {
+            keyboardDao?.getShortcutByTrigger(trimmed)?.let { shortcut ->
+                results.add(0, "🔑 ${shortcut.expansion}")
+            }
+        } catch (_: Exception) {}
 
         // 3. Search learned words from DB
         try {
@@ -64,16 +68,18 @@ class PredictiveEngine(private val keyboardDao: KeyboardDao? = null) {
         } catch (_: Exception) {}
 
         // 4. Search in-memory dictionary
-        dictionary.filter { it.lowercase().startsWith(trimmed) }
-            .take(5)
-            .forEach { dictWord ->
-                if (!results.contains(dictWord)) {
-                    results.add(dictWord)
+        try {
+            dictionary.filter { it.lowercase().startsWith(trimmed) }
+                .take(5)
+                .forEach { dictWord ->
+                    if (!results.contains(dictWord)) {
+                        results.add(dictWord)
+                    }
                 }
-            }
+        } catch (_: Exception) {}
 
         // Return up to 3 distinct predictions
-        return results.distinct().take(3)
+        results.distinct().take(3)
     }
 
     fun getAutocorrectWord(currentWord: String): String? {

@@ -1,13 +1,15 @@
 package com.example.service
 
 import android.inputmethodservice.InputMethodService
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -28,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FeministInputMethodService : InputMethodService(),
     LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
@@ -53,7 +56,9 @@ class FeministInputMethodService : InputMethodService(),
 
     override fun onCreate() {
         super.onCreate()
-        savedStateController.performRestore(null)
+        try {
+            savedStateController.performRestore(null)
+        } catch (_: Exception) {}
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
 
         preferences = KeyboardPreferences.getInstance(this)
@@ -61,12 +66,34 @@ class FeministInputMethodService : InputMethodService(),
         predictiveEngine = PredictiveEngine(database.keyboardDao())
     }
 
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.CREATED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+        currentTypedWord.value = ""
+        predictionsState.value = emptyList()
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        currentTypedWord.value = ""
+        predictionsState.value = emptyList()
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
+        super.onFinishInputView(finishingInput)
+    }
+
     override fun onCreateInputView(): View {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
 
         return ComposeView(this).apply {
-            // Bind view tree owners for Jetpack Compose in Service context
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this@FeministInputMethodService))
             setViewTreeLifecycleOwner(this@FeministInputMethodService)
             setViewTreeViewModelStoreOwner(this@FeministInputMethodService)
             setViewTreeSavedStateRegistryOwner(this@FeministInputMethodService)
@@ -85,12 +112,20 @@ class FeministInputMethodService : InputMethodService(),
                     },
                     listener = object : KeyboardActionListener {
                         override fun onKeyText(text: String) {
-                            currentInputConnection?.commitText(text, 1)
+                            try {
+                                currentInputConnection?.commitText(text, 1)
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error committing text", e)
+                            }
                             updateTypedWord(text)
                         }
 
                         override fun onDelete() {
-                            currentInputConnection?.deleteSurroundingText(1, 0)
+                            try {
+                                currentInputConnection?.deleteSurroundingText(1, 0)
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error deleting text", e)
+                            }
                             if (currentTypedWord.value.isNotEmpty()) {
                                 currentTypedWord.value = currentTypedWord.value.dropLast(1)
                                 fetchPredictions(currentTypedWord.value)
@@ -98,41 +133,56 @@ class FeministInputMethodService : InputMethodService(),
                         }
 
                         override fun onSpace() {
-                            // Check autocorrect on space
-                            val current = currentTypedWord.value
-                            val autocorrect = predictiveEngine.getAutocorrectWord(current)
-                            if (autocorrect != null) {
-                                replaceCurrentWord(autocorrect)
+                            try {
+                                val current = currentTypedWord.value
+                                val autocorrect = predictiveEngine.getAutocorrectWord(current)
+                                if (autocorrect != null) {
+                                    replaceCurrentWord(autocorrect)
+                                } else {
+                                    currentInputConnection?.commitText(" ", 1)
+                                }
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error on space", e)
                             }
-                            currentInputConnection?.commitText(" ", 1)
                             currentTypedWord.value = ""
                             predictionsState.value = emptyList()
                         }
 
                         override fun onEnter() {
-                            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-                            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+                            try {
+                                currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+                                currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error on enter", e)
+                            }
                             currentTypedWord.value = ""
                             predictionsState.value = emptyList()
                         }
 
                         override fun onCursorMove(direction: Int) {
                             val ic = currentInputConnection ?: return
-                            when (direction) {
-                                -1 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
-                                1 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
-                                -10 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP))
-                                10 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
+                            try {
+                                when (direction) {
+                                    -1 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+                                    1 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+                                    -10 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP))
+                                    10 -> ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
+                                }
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error moving cursor", e)
                             }
                         }
 
                         override fun onShortcutTrigger(expansion: String) {
-                            // Delete trigger word and insert expansion
-                            val len = currentTypedWord.value.length
-                            if (len > 0) {
-                                currentInputConnection?.deleteSurroundingText(len, 0)
+                            try {
+                                val len = currentTypedWord.value.length
+                                if (len > 0) {
+                                    currentInputConnection?.deleteSurroundingText(len, 0)
+                                }
+                                currentInputConnection?.commitText("$expansion ", 1)
+                            } catch (e: Exception) {
+                                Log.e("FeministIME", "Error triggering shortcut", e)
                             }
-                            currentInputConnection?.commitText("$expansion ", 1)
                             currentTypedWord.value = ""
                             predictionsState.value = emptyList()
                         }
@@ -153,26 +203,38 @@ class FeministInputMethodService : InputMethodService(),
     }
 
     private fun fetchPredictions(prefix: String) {
-        serviceScope.launch {
-            val suggestions = predictiveEngine.getSuggestions(prefix)
-            predictionsState.value = suggestions
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val suggestions = predictiveEngine.getSuggestions(prefix)
+                withContext(Dispatchers.Main) {
+                    predictionsState.value = suggestions
+                }
+            } catch (e: Exception) {
+                Log.e("FeministIME", "Error fetching predictions", e)
+            }
         }
     }
 
     private fun replaceCurrentWord(replacement: String) {
-        val ic = currentInputConnection ?: return
-        val wordLen = currentTypedWord.value.length
-        if (wordLen > 0) {
-            ic.deleteSurroundingText(wordLen, 0)
+        try {
+            val ic = currentInputConnection ?: return
+            val wordLen = currentTypedWord.value.length
+            if (wordLen > 0) {
+                ic.deleteSurroundingText(wordLen, 0)
+            }
+            ic.commitText("$replacement ", 1)
+        } catch (e: Exception) {
+            Log.e("FeministIME", "Error replacing word", e)
         }
-        ic.commitText("$replacement ", 1)
         currentTypedWord.value = ""
         predictionsState.value = emptyList()
     }
 
     override fun onDestroy() {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-        job.cancel()
+        try {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            job.cancel()
+        } catch (_: Exception) {}
         super.onDestroy()
     }
 }
